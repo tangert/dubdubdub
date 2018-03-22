@@ -4,18 +4,14 @@ import PlaygroundSupport
 /*
  Playground stuff
  */
-let WIDTH = 500
-let HEIGHT = 500
 
-let container = UIView(frame: CGRect(x: 0, y: 0, width: WIDTH, height: HEIGHT))
-PlaygroundPage.current.liveView = container
 PlaygroundPage.current.needsIndefiniteExecution = true
-
 
 protocol Graphable {
     var x: Float! { get set }
     var y: Float! { get set }
     var coordinates: (Float, Float)! { get }
+    var vector: SCNVector3! { get }
 }
 
 class Centroid: Graphable {
@@ -25,7 +21,11 @@ class Centroid: Graphable {
     var coordinates: (Float, Float)! {
         return (x, y)
     }
+    var vector: SCNVector3! {
+        return SCNVector3.init(x, y, 0)
+    }
     var allCoordinates = [(Float, Float)]()
+    var allVectors = [SCNVector3]()
     var color: UIColor!
     
     init() {
@@ -33,14 +33,28 @@ class Centroid: Graphable {
         self.y = 0
     }
     
+    // Constructor with x and y
     init(x: Float, y: Float) {
         self.x = x
         self.y = y
     }
     
-    required init?(coder aDecoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    // Constructor with coordinate pair
+    init(coordinate: (Float, Float)) {
+        self.x = coordinate.0
+        self.y = coordinate.1
     }
+    
+    func setCoord(x: Float, y: Float) {
+        self.x = x
+        self.y = y
+    }
+    
+}
+
+enum centroidType {
+    case previous
+    case current
 }
 
 class DataPoint: Graphable {
@@ -56,23 +70,60 @@ class DataPoint: Graphable {
     var coordinates: (Float, Float)! {
         return (x, y)
     }
+    var vector: SCNVector3! {
+        return SCNVector3.init(x, y, 0)
+    }
     
     init() {
         self.x = 0
         self.y = 0
     }
     
+    // Constructor with x and y
     init(x: Float, y: Float) {
         self.x = x
         self.y = y
     }
     
-    required init?(coder aDecoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    // Constructor with coordinate pair
+    init(coordinate: (Float, Float)) {
+        self.x = coordinate.0
+        self.y = coordinate.1
+    }
+    
+    func setCentroid(type: centroidType, centroid: Centroid) {
+        switch type{
+        case .current:
+            self.currentCentroid = centroid
+        case .previous:
+            self.previousCentroid = centroid
+        }
     }
     
 }
 
+// SceneKit objects
+// Used for 3D plotting
+// Eventually will contain actual animatable 3D models
+class BaseNode: SCNNode {
+    
+    var point: Graphable!
+    
+    override init() {
+        super.init()
+    }
+    
+    init(point: Graphable, geometry: SCNGeometry) {
+        super.init()
+        self.geometry = geometry
+        self.point = point
+        self.position = point.vector
+    }
+    
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
 
 // K-means functions
 func euclideanAverage(dataPoints: [DataPoint]) -> (Float, Float) {
@@ -125,8 +176,36 @@ func printInfo(point: DataPoint) {
 ////////////////////////////////////
 // MARK: K MEANS IMPLEMENTATION
 ////////////////////////////////////
+struct kMeansManager {
+    
+    var k: Int!
+    var data = [DataPoint]()
+    
+    // Data production variables
+    var dataStart = 0
+    var dataEnd = 25
+
+    init(k: Int, data: [DataPoint]) {
+        self.k = k
+        self.data = data
+    }
+    
+    init(k: Int) {
+        self.k = k
+    }
+    
+    mutating func generateData() {
+        for _ in dataStart..<dataEnd {
+            let x = Float(random(start: dataStart, end: dataEnd))
+            let y = Float(random(start: dataStart, end: dataEnd))
+            let point = DataPoint(x: x, y: y)
+            data.append(point)
+        }
+    }
+}
 
 // Set k
+var kMeans = kMeansManager(k: 2)
 let k = 3
 
 // Create the data points
@@ -137,7 +216,7 @@ let end = 50
 
 //Form the data points in clusters
 //Form k clusters
-for i in start..<end {
+for _ in start..<end {
     let x = Float(random(start: start, end: end))
     let y = Float(random(start: start, end: end))
     let point = DataPoint(x: x, y: y)
@@ -164,6 +243,8 @@ var iterations = 0
 
 while !converged {
     
+    iterations += 1
+    
     print("\n\nITERATION \(iterations):")
     
     // Checks convergence by comparing the previous and current centroids of all data points
@@ -184,8 +265,8 @@ while !converged {
             }
         }
         
-        point.previousCentroid = point.currentCentroid
-        point.currentCentroid = closestCentroid
+        point.setCentroid(type: .previous, centroid: point.currentCentroid)
+        point.setCentroid(type: .current, centroid: closestCentroid)
         point.allCentroids.append(closestCentroid)
         
         if point.currentCentroid.coordinates! != point.previousCentroid.coordinates! {
@@ -206,8 +287,7 @@ while !converged {
         
         let newLocation = euclideanAverage(dataPoints: currentPoints)
         centroid.allCoordinates.append(newLocation)
-        centroid.x = newLocation.0
-        centroid.y = newLocation.1
+        centroid.setCoord(x: newLocation.0, y: newLocation.1)
     }
     
     if allSame {
@@ -215,34 +295,47 @@ while !converged {
         converged = true
     }
     
-    iterations += 1
-    
 }
 
-// Plot the centroids
+// 3D plotting!
+//Scene kit setup
+let scene = SCNScene()
+let light = SCNLight()
+light.type = SCNLight.LightType.omni
+let lightNode = SCNNode()
+lightNode.light = light
+lightNode.position = SCNVector3(8,12,15)
+scene.rootNode.addChildNode(lightNode)
+
+// Plot in 3D!
 for centroid in centroids {
-    for i in 1...centroid.allCoordinates.count {
-        
-        let coord = centroid.allCoordinates[i-1]
-        let scaledX = (coord.0)/Float(end) * Float(WIDTH)
-        let scaledY = (coord.1)/Float(end) * Float(HEIGHT)
-        
-        let dataView = UIView(frame: CGRect(x: Double(scaledX), y: Double(scaledY), width: 15, height: 15))
-        let opacity = Double(i)/Double(centroid.allCoordinates.count)
-        
-        dataView.backgroundColor = UIColor.white.withAlphaComponent(CGFloat(opacity))
-        dataView.layer.cornerRadius = 10
-        container.addSubview(dataView)
-    }
+    
+    let box = SCNBox.init(width: 2.5, height: 2.5, length: 2.5, chamferRadius: 0.5)
+    let node = BaseNode(point: centroid, geometry: box)
+    let material = SCNMaterial()
+    material.diffuse.contents = UIColor.white
+    node.geometry?.materials = [material]
+    
+    scene.rootNode.addChildNode(node)
+    
 }
 
-// Plot the data
-for data in dataPoints {
-    let scaledX = (data.x)/Float(end) * Float(WIDTH)
-    let scaledY = (data.y)/Float(end) * Float(HEIGHT)
+for dataPoint in dataPoints {
     
-    let dataView = UIView(frame: CGRect(x: Double(scaledX), y: Double(scaledY), width: 10, height: 10))
-    dataView.backgroundColor = data.currentCentroid.color.withAlphaComponent(0.75)
-    dataView.layer.cornerRadius = 7.5
-    container.addSubview(dataView)
+    let sphere = SCNSphere.init(radius: 1)
+    let node = BaseNode(point: dataPoint, geometry: sphere)
+    let material = SCNMaterial()
+    material.diffuse.contents = dataPoint.currentCentroid.color
+    node.geometry?.materials = [material]
+    scene.rootNode.addChildNode(node)
+    
 }
+
+let view = SCNView(frame: CGRect(x: 0, y: 0, width: 1000, height: 1000))
+view.allowsCameraControl = true
+view.autoenablesDefaultLighting = true
+view.showsStatistics = true
+view.scene = scene
+view.backgroundColor = UIColor.black
+PlaygroundPage.current.liveView = view
+
